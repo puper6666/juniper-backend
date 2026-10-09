@@ -32,12 +32,12 @@
     input { background: #090d12; border: 1px solid var(--border); color: #fff; padding: 10px 14px; border-radius: 8px; font-size: 14px; outline: none; width: 100%; }
     input:focus { border-color: var(--primary); }
     
-    button { background: var(--primary); color: #000; border: none; font-weight: 600; padding: 10px 18px; border-radius: 8px; cursor: pointer; transition: 0.2s; white-space: nowrap; }
-    button:hover { background: var(--primary-hover); }
-    button.btn-secondary { background: #21262d; color: var(--text); border: 1px solid var(--border); }
-    button.btn-secondary:hover { background: #30363d; }
-    button.btn-danger { background: rgba(248, 81, 73, 0.15); color: var(--danger); border: 1px solid rgba(248, 81, 73, 0.4); }
-    button.btn-danger:hover { background: var(--danger); color: #fff; }
+    button { background: #238636; color: #ffffff; border: 1px solid rgba(240, 246, 252, 0.1); font-weight: 600; padding: 10px 18px; border-radius: 8px; cursor: pointer; transition: 0.2s; white-space: nowrap; font-size: 14px; }
+    button:hover { background: #2ea043; border-color: rgba(240, 246, 252, 0.2); }
+    button.btn-secondary { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
+    button.btn-secondary:hover { background: #30363d; color: #f0f6fc; border-color: #8b949e; }
+    button.btn-danger { background: rgba(248, 81, 73, 0.15); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.4); }
+    button.btn-danger:hover { background: #da3633; color: #ffffff; border-color: #f85149; }
     
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
     th, td { text-align: left; padding: 12px; border-bottom: 1px solid var(--border); font-size: 14px; }
@@ -201,6 +201,29 @@
     <div style="display: flex; gap: 10px;">
       <button onclick="saveVersionSettings()">💾 Сохранить и опубликовать версию</button>
       <button class="btn-secondary" onclick="loadVersionSettings()">Перезагрузить данные</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+      <h2>🛡️ Защита от накрутки триалов (Использованные устройства)</h2>
+      <button class="btn-secondary btn-sm" onclick="loadTrials()">Обновить список</button>
+    </div>
+    <div style="overflow-x: auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Идентификатор устройства (Device ID)</th>
+            <th>Логин</th>
+            <th>IP адрес</th>
+            <th>Дата активации</th>
+            <th>Действие</th>
+          </tr>
+        </thead>
+        <tbody id="trialTableBody">
+          <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">Загрузка...</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
@@ -520,10 +543,56 @@
     }
   }
 
+  async function loadTrials() {
+    try {
+      const res = await fetch(`${API_BASE}/trials`, { headers: getHeaders() });
+      if (!res.ok) return;
+      const trials = await res.json();
+      const tbody = document.getElementById('trialTableBody');
+      tbody.innerHTML = '';
+      if (!trials || trials.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">Пока нет активированных устройств.</td></tr>';
+        return;
+      }
+      trials.forEach(t => {
+        const d = new Date(t.createdAt).toLocaleString('ru-RU');
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td style="font-family: monospace; font-size: 12px; color: var(--primary);">${t.deviceId.substring(0, 16)}...</td>
+          <td style="font-weight: 600;">${t.registeredUsername}</td>
+          <td>${t.ip || '—'}</td>
+          <td>${d}</td>
+          <td>
+            <button class="btn-danger btn-sm" onclick="resetTrial('${t.deviceId}', '${t.registeredUsername}')">Сбросить</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    } catch (_) {}
+  }
+
+  async function resetTrial(deviceId, username) {
+    if (!confirm(`Разрешить пользователю "${username}" повторно взять триал на этом устройстве?`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/trials/reset`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ deviceId, username })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      alert(data.message || 'Устройство сброшено!');
+      loadTrials();
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
   function loadAll() {
     loadUsers();
     loadServers();
     loadVersionSettings();
+    loadTrials();
   }
 
   // Автозагрузка при открытии
