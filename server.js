@@ -54,26 +54,106 @@ const ServerSchema = new mongoose.Schema({
 
 const ServerModel = mongoose.model('Server', ServerSchema);
 
-// Вспомогательная функция парсинга vless:// ссылки
+// Схема версии приложения для OTA обновлений
+const AppVersionSchema = new mongoose.Schema({
+  versionCode: { type: Number, required: true, default: 1 },
+  versionName: { type: String, required: true, default: '1.0.0' },
+  apkUrl: { type: String, required: true, default: 'http://4.223.130.97/JuniperVPN.apk' },
+  changelog: { type: String, default: 'Первый релиз JuniperVPN с поддержкой VLESS Reality' },
+  isForceUpdate: { type: Boolean, default: false },
+  updatedAt: { type: Date, default: Date.now }
+});
+
+const AppVersion = mongoose.model('AppVersion', AppVersionSchema);
+
+// Вспомогательная функция автоопределения флага страны
+function autoDetectFlag(name = '') {
+  const n = (name || '').toLowerCase();
+  if (n.includes('швеци') || n.includes('sweden') || n.includes('se')) return '🇸🇪';
+  if (n.includes('польш') || n.includes('poland') || n.includes('pl')) return '🇵🇱';
+  if (n.includes('росси') || n.includes('russia') || n.includes('ru') || n.includes('москв')) return '🇷🇺';
+  if (n.includes('герман') || n.includes('germany') || n.includes('de') || n.includes('frankfurt') || n.includes('berlin')) return '🇩🇪';
+  if (n.includes('нидерл') || n.includes('netherlands') || n.includes('nl') || n.includes('амстердам')) return '🇳🇱';
+  if (n.includes('франц') || n.includes('france') || n.includes('fr') || n.includes('paris')) return '🇫🇷';
+  if (n.includes('сша') || n.includes('usa') || n.includes('us') || n.includes('америк')) return '🇺🇸';
+  if (n.includes('великобрит') || n.includes('uk') || n.includes('england') || n.includes('англия') || n.includes('london')) return '🇬🇧';
+  if (n.includes('турци') || n.includes('turkey') || n.includes('tr') || n.includes('стамбул')) return '🇹🇷';
+  if (n.includes('финлян') || n.includes('finland') || n.includes('fi') || n.includes('хельсинк')) return '🇫🇮';
+  if (n.includes('казах') || n.includes('kazakhstan') || n.includes('kz')) return '🇰🇿';
+  if (n.includes('япон') || n.includes('japan') || n.includes('jp') || n.includes('токио')) return '🇯🇵';
+  if (n.includes('сингапур') || n.includes('singapore') || n.includes('sg')) return '🇸🇬';
+  if (n.includes('оаэ') || n.includes('uae') || n.includes('dubai') || n.includes('дубай')) return '🇦🇪';
+  if (n.includes('канад') || n.includes('canada') || n.includes('ca')) return '🇨🇦';
+  if (n.includes('испан') || n.includes('spain') || n.includes('es') || n.includes('мадрид')) return '🇪🇸';
+  if (n.includes('итали') || n.includes('italy') || n.includes('it') || n.includes('рим')) return '🇮🇹';
+  if (n.includes('австри') || n.includes('austria') || n.includes('at') || n.includes('вена')) return '🇦🇹';
+  if (n.includes('чехи') || n.includes('czech') || n.includes('cz') || n.includes('прага')) return '🇨🇿';
+  return '🌐';
+}
+
 function parseVlessUri(uri) {
   try {
-    const trimmed = uri.trim();
-    if (!trimmed.startsWith('vless://')) return null;
+    const trimmed = (uri || '').trim().replace(/^["']|["']$/g, '');
+    if (!trimmed.toLowerCase().startsWith('vless://')) return null;
 
-    const url = new URL(trimmed);
-    const uuid = url.username;
-    const address = url.hostname;
-    const port = parseInt(url.port) || 443;
-    const params = url.searchParams;
+    let uuid = '', address = '', port = 443, flow = '', sni = '', fingerprint = 'chrome', publicKey = '', shortId = '', rawName = '';
 
-    const flow = params.get('flow') || 'xtls-rprx-vision';
-    const sni = params.get('sni') || '';
-    const fingerprint = params.get('fp') || 'chrome';
-    const publicKey = params.get('pbk') || '';
-    const shortId = params.get('sid') || '';
-    const rawName = decodeURIComponent(url.hash ? url.hash.substring(1) : '');
+    // 1. Попробуем WHATWG URL
+    try {
+      const url = new URL(trimmed);
+      uuid = url.username || '';
+      address = url.hostname || '';
+      port = parseInt(url.port) || 443;
+      const params = url.searchParams;
 
-    if (!uuid || !address || !publicKey) return null;
+      flow = params.get('flow') || '';
+      sni = params.get('sni') || params.get('serverName') || params.get('host') || '';
+      fingerprint = params.get('fp') || params.get('fingerprint') || 'chrome';
+      publicKey = params.get('pbk') || params.get('pk') || params.get('publicKey') || params.get('public_key') || '';
+      shortId = params.get('sid') || params.get('shortId') || params.get('short_id') || '';
+
+      if (url.hash) {
+        const hashStr = url.hash.substring(1);
+        try {
+          rawName = decodeURIComponent(hashStr);
+        } catch (_) {
+          rawName = hashStr;
+        }
+      }
+    } catch (_) {
+      // Игнорируем ошибку WHATWG URL и переходим к Regex
+    }
+
+    // 2. Резервный разбор через Regex (если WHATWG URL не смог или uuid пустой)
+    if (!uuid || !address) {
+      const regex = /^vless:\/\/([^@]+)@([^:/?#]+)(?::(\d+))?(?:\?([^#]*))?(?:#(.*))?$/i;
+      const match = trimmed.match(regex);
+      if (match) {
+        uuid = match[1] || '';
+        address = match[2] || '';
+        port = parseInt(match[3]) || 443;
+
+        const queryString = match[4] || '';
+        const rawHash = match[5] || '';
+
+        if (rawHash) {
+          try {
+            rawName = decodeURIComponent(rawHash);
+          } catch (_) {
+            rawName = rawHash;
+          }
+        }
+
+        const queryParams = new URLSearchParams(queryString);
+        flow = queryParams.get('flow') || flow || '';
+        sni = queryParams.get('sni') || queryParams.get('serverName') || queryParams.get('host') || sni || '';
+        fingerprint = queryParams.get('fp') || queryParams.get('fingerprint') || fingerprint || 'chrome';
+        publicKey = queryParams.get('pbk') || queryParams.get('pk') || queryParams.get('publicKey') || queryParams.get('public_key') || publicKey || '';
+        shortId = queryParams.get('sid') || queryParams.get('shortId') || queryParams.get('short_id') || shortId || '';
+      }
+    }
+
+    if (!uuid || !address) return null;
 
     return {
       uuid,
@@ -211,6 +291,62 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// 1.1 Регистрация пробного периода на 24 часа
+app.post('/api/auth/register-trial', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Укажите логин и пароль' });
+    }
+    const cleanUser = username.toLowerCase().trim();
+    if (cleanUser.length < 3) {
+      return res.status(400).json({ error: 'Логин должен быть не короче 3 символов' });
+    }
+    if (password.length < 4) {
+      return res.status(400).json({ error: 'Пароль должен быть не короче 4 символов' });
+    }
+
+    const existing = await User.findOne({ username: cleanUser });
+    if (existing) {
+      return res.status(400).json({ error: 'Этот логин уже занят. Выберите другой.' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+    const expiry = new Date();
+    expiry.setDate(expiry.getDate() + 1); // 24 часа
+
+    const newUser = new User({
+      username: cleanUser,
+      password: hashedPassword,
+      subscriptionExpiresAt: expiry,
+      isActive: true,
+      isAdmin: false,
+      notes: 'Пробный период 24 часа'
+    });
+    await newUser.save();
+
+    const token = jwt.sign(
+      { id: newUser._id, username: newUser.username, isAdmin: false },
+      process.env.JWT_SECRET || 'juniper_secret',
+      { expiresIn: '60d' }
+    );
+
+    res.status(201).json({
+      token,
+      username: newUser.username,
+      subscriptionExpiresAt: newUser.subscriptionExpiresAt,
+      isSubActive: true,
+      remainingDays: 1,
+      isAdmin: false,
+      message: '🎉 Пробный период на 24 часа активирован!'
+    });
+  } catch (e) {
+    console.error('Ошибка регистрации триала:', e);
+    res.status(500).json({ error: 'Ошибка активации пробного периода' });
+  }
+});
+
 // 2. Статус подписки
 app.get('/api/auth/status', authenticateToken, async (req, res) => {
   try {
@@ -241,7 +377,8 @@ app.get('/api/vpn/servers', authenticateToken, async (req, res) => {
     if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
 
     const now = new Date();
-    if (!user.isActive || user.subscriptionExpiresAt <= now) {
+    const isAdmin = Boolean(user.isAdmin || user.username === 'kavyn');
+    if (!isAdmin && (!user.isActive || user.subscriptionExpiresAt <= now)) {
       return res.status(403).json({ error: 'Подписка истекла. Доступ к серверам ограничен.' });
     }
 
@@ -249,12 +386,12 @@ app.get('/api/vpn/servers', authenticateToken, async (req, res) => {
     if (dbServers && dbServers.length > 0) {
       const formatted = dbServers.map(s => ({
         id: s._id.toString(),
-        name: s.name,
+        name: s.name || 'Сервер',
         flag: s.flag || '🌐',
-        address: s.address,
-        port: s.port,
-        uuid: s.uuid,
-        publicKey: s.publicKey,
+        address: s.address || '',
+        port: s.port || 443,
+        uuid: s.uuid || '',
+        publicKey: s.publicKey || '',
         shortId: s.shortId || '',
         sni: s.sni || '',
         flow: s.flow || 'xtls-rprx-vision',
@@ -283,25 +420,52 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
   }
 });
 
-// Создание пользователя
+// Создание пользователя (или продление существующего)
 app.post('/api/admin/create-user', requireAdmin, async (req, res) => {
   try {
     const { username, password, days, isAdmin } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Укажите логин и пароль' });
+    if (!username) {
+      return res.status(400).json({ error: 'Укажите логин' });
     }
 
-    const existingUser = await User.findOne({ username: username.toLowerCase().trim() });
+    const cleanUser = username.toLowerCase().trim();
+    const subDays = parseInt(days) || 30;
+    let existingUser = await User.findOne({ username: cleanUser });
+
     if (existingUser) {
-      return res.status(400).json({ error: 'Пользователь уже существует' });
+      // Пользователь уже существует — продлеваем и обновляем пароль если передан
+      if (password) {
+        existingUser.password = await bcrypt.hash(password, 10);
+      }
+      const currentExpiry = existingUser.subscriptionExpiresAt > new Date() ? existingUser.subscriptionExpiresAt : new Date();
+      existingUser.subscriptionExpiresAt = new Date(currentExpiry.getTime() + subDays * 24 * 60 * 60 * 1000);
+      existingUser.isActive = true;
+      if (isAdmin !== undefined) {
+        existingUser.isAdmin = Boolean(isAdmin);
+      }
+      await existingUser.save();
+
+      return res.status(200).json({
+        message: `Пользователь ${existingUser.username} обновлен, подписка продлена на ${subDays} дн.!`,
+        user: {
+          _id: existingUser._id,
+          username: existingUser.username,
+          subscriptionExpiresAt: existingUser.subscriptionExpiresAt,
+          isActive: existingUser.isActive,
+          isAdmin: existingUser.isAdmin
+        }
+      });
+    }
+
+    if (!password) {
+      return res.status(400).json({ error: 'Укажите пароль для нового пользователя' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const subDays = parseInt(days) || 30;
     const expiry = new Date(Date.now() + subDays * 24 * 60 * 60 * 1000);
 
     const user = new User({
-      username: username.toLowerCase().trim(),
+      username: cleanUser,
       password: hashedPassword,
       subscriptionExpiresAt: expiry,
       isActive: true,
@@ -321,11 +485,17 @@ app.post('/api/admin/create-user', requireAdmin, async (req, res) => {
   }
 });
 
-// Продление подписки
+// Продление подписки (по userId или по username)
 app.post('/api/admin/extend', requireAdmin, async (req, res) => {
   try {
-    const { userId, days } = req.body;
-    const user = await User.findById(userId);
+    const { userId, username, days } = req.body;
+    let user = null;
+    if (userId) {
+      user = await User.findById(userId);
+    } else if (username) {
+      user = await User.findOne({ username: username.toLowerCase().trim() });
+    }
+
     if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
 
     const currentExpiry = user.subscriptionExpiresAt > new Date() ? user.subscriptionExpiresAt : new Date();
@@ -389,7 +559,23 @@ app.delete('/api/admin/user/:id', requireAdmin, async (req, res) => {
 app.get('/api/admin/servers', requireAdmin, async (req, res) => {
   try {
     const servers = await ServerModel.find().sort({ createdAt: 1 });
-    res.json(servers);
+    const formatted = servers.map(s => ({
+      _id: s._id.toString(),
+      id: s._id.toString(),
+      name: s.name || 'Сервер',
+      flag: s.flag || '🌐',
+      address: s.address || '',
+      port: s.port || 443,
+      uuid: s.uuid || '',
+      publicKey: s.publicKey || '',
+      shortId: s.shortId || '',
+      sni: s.sni || '',
+      flow: s.flow || 'xtls-rprx-vision',
+      fingerprint: s.fingerprint || 'chrome',
+      isActive: Boolean(s.isActive),
+      createdAt: s.createdAt ? s.createdAt.toISOString() : new Date().toISOString()
+    }));
+    res.json(formatted);
   } catch (error) {
     res.status(500).json({ error: 'Ошибка загрузки серверов' });
   }
@@ -402,46 +588,77 @@ app.post('/api/admin/servers', requireAdmin, async (req, res) => {
 
     if (vlessUrl) {
       const parsed = parseVlessUri(vlessUrl);
-      if (!parsed) {
-        return res.status(400).json({ error: 'Неверный формат VLESS URL. Ссылка должна начинаться с vless://' });
-      }
-      address = parsed.address;
-      port = parsed.port;
-      uuid = parsed.uuid;
-      publicKey = parsed.publicKey;
-      shortId = parsed.shortId || '';
-      sni = parsed.sni || '';
-      flow = parsed.flow || 'xtls-rprx-vision';
-      fingerprint = parsed.fingerprint || 'chrome';
-      if (!name && parsed.rawName) {
-        name = parsed.rawName;
+      if (parsed) {
+        address = address || parsed.address;
+        port = port || parsed.port;
+        uuid = uuid || parsed.uuid;
+        publicKey = publicKey || parsed.publicKey;
+        shortId = shortId || parsed.shortId || '';
+        sni = sni || parsed.sni || '';
+        flow = flow !== undefined ? flow : (parsed.flow || '');
+        fingerprint = fingerprint || parsed.fingerprint || 'chrome';
+        if (!name && parsed.rawName) {
+          name = parsed.rawName;
+        }
       }
     }
 
-    if (!name || !address || !port || !uuid || !publicKey) {
-      return res.status(400).json({ error: 'Заполните обязательные параметры: Название, Адрес, Порт, UUID и Публичный ключ (pbk)' });
+    // Авто-дефолты для названия и адреса
+    if (!name || !name.trim()) {
+      if (address) {
+        name = `Сервер ${address}:${port || 443}`;
+      } else {
+        name = 'Новый VPN Сервер';
+      }
+    }
+
+    // Автоопределение флага по названию если не указан
+    if (!flag || !flag.trim() || flag === '🌐') {
+      flag = autoDetectFlag(name);
+    }
+
+    if (!address || !port || !uuid) {
+      return res.status(400).json({ error: 'Не удалось определить адрес, порт или UUID из ссылки. Вставьте полную vless:// ссылку.' });
     }
 
     const newServer = new ServerModel({
       name: name.trim(),
       flag: flag && flag.trim() ? flag.trim() : '🌐',
       address: address.trim(),
-      port: parseInt(port),
+      port: parseInt(port) || 443,
       uuid: uuid.trim(),
-      publicKey: publicKey.trim(),
-      shortId: shortId ? shortId.trim() : '',
-      sni: sni ? sni.trim() : '',
-      flow: flow ? flow.trim() : 'xtls-rprx-vision',
-      fingerprint: fingerprint ? fingerprint.trim() : 'chrome',
+      publicKey: (publicKey || '').trim(),
+      shortId: (shortId || '').trim(),
+      sni: (sni || '').trim(),
+      flow: (flow || '').trim(),
+      fingerprint: (fingerprint || 'chrome').trim(),
       isActive: true
     });
 
     await newServer.save();
     console.log(`[ADMIN] Добавлен новый сервер: ${newServer.name} (${newServer.address}:${newServer.port})`);
-    res.status(201).json({ message: `Сервер ${newServer.name} успешно добавлен!`, server: newServer });
+    res.status(201).json({
+      message: `Сервер ${newServer.name} успешно добавлен!`,
+      server: {
+        _id: newServer._id.toString(),
+        id: newServer._id.toString(),
+        name: newServer.name,
+        flag: newServer.flag,
+        address: newServer.address,
+        port: newServer.port,
+        uuid: newServer.uuid,
+        publicKey: newServer.publicKey,
+        shortId: newServer.shortId,
+        sni: newServer.sni,
+        flow: newServer.flow,
+        fingerprint: newServer.fingerprint,
+        isActive: newServer.isActive,
+        createdAt: newServer.createdAt.toISOString()
+      }
+    });
   } catch (error) {
     console.error('Ошибка добавления сервера:', error);
-    res.status(500).json({ error: 'Ошибка сохранения сервера' });
+    res.status(500).json({ error: 'Ошибка сохранения сервера: ' + (error.message || error) });
   }
 });
 
@@ -468,6 +685,83 @@ app.delete('/api/admin/servers/:id', requireAdmin, async (req, res) => {
     res.json({ message: `Сервер ${server.name} удален` });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка удаления сервера' });
+  }
+});
+
+// -------------------------------------------------------------
+// ПАНЕЛЬ АДМИНИСТРАТОРА: OTA ОБНОВЛЕНИЯ ПРИЛОЖЕНИЯ
+// -------------------------------------------------------------
+
+// Получение информации о последней версии приложения (публичный API)
+app.get('/api/app-version', async (req, res) => {
+  try {
+    let latest = await AppVersion.findOne().sort({ updatedAt: -1 });
+    if (!latest) {
+      latest = await AppVersion.create({
+        versionCode: 1,
+        versionName: '1.0.0',
+        apkUrl: 'http://4.223.130.97/JuniperVPN.apk',
+        changelog: 'Первый релиз JuniperVPN с поддержкой VLESS Reality.',
+        isForceUpdate: false
+      });
+    }
+    res.json({
+      versionCode: latest.versionCode,
+      versionName: latest.versionName,
+      apkUrl: latest.apkUrl,
+      changelog: latest.changelog,
+      isForceUpdate: Boolean(latest.isForceUpdate),
+      updatedAt: latest.updatedAt
+    });
+  } catch (error) {
+    console.error('Ошибка получения версии:', error);
+    res.json({
+      versionCode: 1,
+      versionName: '1.0.0',
+      apkUrl: 'http://4.223.130.97/JuniperVPN.apk',
+      changelog: '',
+      isForceUpdate: false
+    });
+  }
+});
+
+// Обновление версии администратором
+app.post('/api/admin/app-version', requireAdmin, async (req, res) => {
+  try {
+    const { versionCode, versionName, apkUrl, changelog, isForceUpdate } = req.body;
+    if (!versionCode || !versionName) {
+      return res.status(400).json({ error: 'Укажите номер версии и код версии (versionCode)' });
+    }
+
+    let current = await AppVersion.findOne().sort({ updatedAt: -1 });
+    if (!current) {
+      current = new AppVersion();
+    }
+
+    current.versionCode = parseInt(versionCode) || 1;
+    current.versionName = String(versionName).trim();
+    if (apkUrl) current.apkUrl = String(apkUrl).trim();
+    current.changelog = changelog !== undefined ? String(changelog) : current.changelog;
+    current.isForceUpdate = Boolean(isForceUpdate);
+    current.updatedAt = new Date();
+
+    await current.save();
+
+    console.log(`[ADMIN] Опубликована новая версия приложения: ${current.versionName} (${current.versionCode}), Force: ${current.isForceUpdate}`);
+    res.json({
+      message: `Версия ${current.versionName} успешно сохранена и опубликована!`,
+      version: {
+        versionCode: current.versionCode,
+        versionName: current.versionName,
+        apkUrl: current.apkUrl,
+        changelog: current.changelog,
+        isForceUpdate: current.isForceUpdate,
+        updatedAt: current.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Ошибка сохранения версии:', error);
+    res.status(500).json({ error: 'Ошибка сохранения версии: ' + (error.message || error) });
   }
 });
 
