@@ -49,6 +49,7 @@ const ServerSchema = new mongoose.Schema({
   flow: { type: String, default: 'xtls-rprx-vision' },
   fingerprint: { type: String, default: 'chrome' },
   isActive: { type: Boolean, default: true },
+  isMaintenance: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now }
 });
 
@@ -441,7 +442,8 @@ app.get('/api/vpn/servers', authenticateToken, async (req, res) => {
         shortId: s.shortId || '',
         sni: s.sni || '',
         flow: s.flow || 'xtls-rprx-vision',
-        fingerprint: s.fingerprint || 'chrome'
+        fingerprint: s.fingerprint || 'chrome',
+        isMaintenance: Boolean(s.isMaintenance)
       }));
       return res.json({ servers: formatted });
     }
@@ -619,6 +621,7 @@ app.get('/api/admin/servers', requireAdmin, async (req, res) => {
       flow: s.flow || 'xtls-rprx-vision',
       fingerprint: s.fingerprint || 'chrome',
       isActive: Boolean(s.isActive),
+      isMaintenance: Boolean(s.isMaintenance),
       createdAt: s.createdAt ? s.createdAt.toISOString() : new Date().toISOString()
     }));
     res.json(formatted);
@@ -719,6 +722,25 @@ app.post('/api/admin/servers/:id/toggle', requireAdmin, async (req, res) => {
     res.json({ message: `Сервер ${server.name}: ${server.isActive ? 'Включен' : 'Отключен'}`, server });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка переключения сервера' });
+  }
+});
+
+// Переключение статуса техработ сервера
+app.post('/api/admin/servers/:id/maintenance', requireAdmin, async (req, res) => {
+  try {
+    const server = await ServerModel.findById(req.params.id);
+    if (!server) return res.status(404).json({ error: 'Сервер не найден' });
+
+    server.isMaintenance = !server.isMaintenance;
+    await server.save();
+    console.log(`[ADMIN] Сервер ${server.name} техработы: ${server.isMaintenance ? 'ВКЛ' : 'ВЫКЛ'}`);
+    res.json({
+      message: `Сервер ${server.name}: техработы ${server.isMaintenance ? 'ВКЛЮЧЕНЫ' : 'ВЫКЛЮЧЕНЫ'}`,
+      isMaintenance: server.isMaintenance,
+      server
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка переключения техработ' });
   }
 });
 
