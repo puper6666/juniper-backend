@@ -66,6 +66,16 @@ const AppVersionSchema = new mongoose.Schema({
 
 const AppVersion = mongoose.model('AppVersion', AppVersionSchema);
 
+// Схема учета устройств для предотвращения повторного использования триала
+const TrialDeviceSchema = new mongoose.Schema({
+  deviceId: { type: String, required: true, unique: true, index: true },
+  ip: { type: String, default: '' },
+  registeredUsername: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const TrialDevice = mongoose.model('TrialDevice', TrialDeviceSchema);
+
 // Вспомогательная функция автоопределения флага страны
 function autoDetectFlag(name = '') {
   const n = (name || '').toLowerCase();
@@ -291,10 +301,10 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// 1.1 Регистрация пробного периода на 24 часа
+// 1.1 Регистрация пробного периода на 24 часа (строго 1 раз на устройство)
 app.post('/api/auth/register-trial', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password, deviceId } = req.body;
     if (!username || !password) {
       return res.status(400).json({ error: 'Укажите логин и пароль' });
     }
@@ -304,6 +314,34 @@ app.post('/api/auth/register-trial', async (req, res) => {
     }
     if (password.length < 4) {
       return res.status(400).json({ error: 'Пароль должен быть не короче 4 символов' });
+    }
+
+    // 1. Проверка идентификатора устройства (Device ID)
+    const cleanDeviceId = (deviceId || '').trim();
+    if (!cleanDeviceId || cleanDeviceId.length < 8) {
+      return res.status(400).json({ error: 'Не передан уникальный идентификатор устройства. Обновите приложение.' });
+    }
+
+    const existingDevice = await TrialDevice.findOne({ deviceId: cleanDeviceId });
+    if (existingDevice) {
+      return res.status(403).json({
+        error: '❌ На этом устройстве уже был использован бесплатный пробный период! Повторная активация невозможна. Оформите подписку для продолжения.'
+      });
+    }
+
+    // 2. Лимит по IP-адресу (максимум 2 триала на один IP за 24 часа для защиты от эмуляторов)
+    const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '';
+    if (clientIp && !clientIp.includes('127.0.0.1')) {
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const ipTrials = await TrialDevice.countDocuments({
+        ip: clientIp,
+        createdAt: { $gte: oneDayAgo }
+      });
+      if (ipTrials >= 3) {
+        return res.status(429).json({
+          error: '❌ С вашего IP-адреса превышен суточный лимит пробных периодов. Оформите подписку или попробуйте позже.'
+        });
+      }
     }
 
     const existing = await User.findOne({ username: cleanUser });
@@ -322,9 +360,17 @@ app.post('/api/auth/register-trial', async (req, res) => {
       subscriptionExpiresAt: expiry,
       isActive: true,
       isAdmin: false,
-      notes: 'Пробный период 24 часа'
+      notes: `Пробный период 24ч (Device: ${cleanDeviceId.substring(0, 12)}...)`
     });
     await newUser.save();
+
+    // Фиксируем устройство в базе — повторно триал взять нельзя!
+    const trialRecord = new TrialDevice({
+      deviceId: cleanDeviceId,
+      ip: clientIp,
+      registeredUsername: cleanUser
+    });
+    await trialRecord.save();
 
     const token = jwt.sign(
       { id: newUser._id, username: newUser.username, isAdmin: false },
@@ -762,6 +808,32 @@ app.post('/api/admin/app-version', requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('Ошибка сохранения версии:', error);
     res.status(500).json({ error: 'Ошибка сохранения версии: ' + (error.message || error) });
+  }
+});
+
+// Список использованных триалов для админки
+app.get('/api/admin/trials', requireAdmin, async (req, res) => {
+  try {
+    const trials = await TrialDevice.find().sort({ createdAt: -1 }).limit(100);
+    res.json(trials);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Сброс триала для устройства администратором (разрешить взять триал повторно)
+app.post('/api/admin/trials/reset', requireAdmin, async (req, res) => {
+  try {
+    const { deviceId, username } = req.body;
+    let query = {};
+    if (deviceId) query.deviceId = deviceId.trim();
+    else if (username) query.registeredUsername = username.trim().toLowerCase();
+    else return res.status(400).json({ error: 'Укажите deviceId или username' });
+
+    const result = await TrialDevice.deleteMany(query);
+    res.json({ message: `Сброшено записей триала: ${result.deletedCount}` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
