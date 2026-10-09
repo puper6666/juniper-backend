@@ -369,10 +369,14 @@
         <td style="font-weight: 600;">${s.name}</td>
         <td><code>${s.address}:${s.port}</code></td>
         <td><small style="color: var(--text-muted);">${s.sni || '—'} (${s.flow || 'direct'})</small></td>
-        <td><span class="badge ${s.isActive ? 'badge-active' : 'badge-expired'}">${s.isActive ? 'Активен' : 'Отключен'}</span></td>
+        <td>
+          <span class="badge ${s.isActive ? 'badge-active' : 'badge-expired'}">${s.isActive ? 'Активен' : 'Отключен'}</span>
+          ${s.isMaintenance ? '<span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); margin-left: 4px;">🛠️ Техработы</span>' : ''}
+        </td>
         <td>
           <div class="action-group">
             <button class="btn-secondary btn-sm" onclick="toggleServerStatus('${s._id || s.id}')">${s.isActive ? 'Отключить' : 'Включить'}</button>
+            <button class="btn-secondary btn-sm" style="${s.isMaintenance ? 'color: #f59e0b; border-color: #f59e0b;' : ''}" onclick="toggleServerMaintenance('${s._id || s.id}')">${s.isMaintenance ? '✅ Снять техработы' : '🛠️ Техработы'}</button>
             <button class="btn-danger btn-sm" onclick="deleteServer('${s._id || s.id}', '${s.name}')">Удалить</button>
           </div>
         </td>
@@ -453,6 +457,20 @@
   async function toggleServerStatus(id) {
     try {
       const res = await fetch(`${API_BASE}/servers/${id}/toggle`, {
+        method: 'POST',
+        headers: getHeaders()
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      loadServers();
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function toggleServerMaintenance(id) {
+    try {
+      const res = await fetch(`${API_BASE}/servers/${id}/maintenance`, {
         method: 'POST',
         headers: getHeaders()
       });
