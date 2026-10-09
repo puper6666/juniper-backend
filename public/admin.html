@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JuniperVPN — Панель управления подписками</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --border: #30363d;
+      --primary: #00e676;
+      --primary-hover: #00c853;
+      --text: #f0f6fc;
+      --text-muted: #8b949e;
+      --danger: #f85149;
+      --success: #3fb950;
+      --warning: #d29922;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+    body { background-color: var(--bg); color: var(--text); padding: 30px 20px; }
+    .container { max-width: 1000px; margin: 0 auto; }
+    
+    header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid var(--border); padding-bottom: 20px; }
+    .logo { font-size: 24px; font-weight: 700; color: var(--primary); display: flex; align-items: center; gap: 10px; }
+    
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 25px; }
+    h2 { font-size: 18px; margin-bottom: 16px; color: var(--text); }
+    
+    .form-group { display: flex; gap: 12px; margin-bottom: 15px; }
+    input { background: #090d12; border: 1px solid var(--border); color: #fff; padding: 10px 14px; border-radius: 8px; font-size: 14px; outline: none; width: 100%; }
+    input:focus { border-color: var(--primary); }
+    
+    button { background: var(--primary); color: #000; border: none; font-weight: 600; padding: 10px 18px; border-radius: 8px; cursor: pointer; transition: 0.2s; white-space: nowrap; }
+    button:hover { background: var(--primary-hover); }
+    button.btn-secondary { background: #21262d; color: var(--text); border: 1px solid var(--border); }
+    button.btn-secondary:hover { background: #30363d; }
+    button.btn-danger { background: rgba(248, 81, 73, 0.15); color: var(--danger); border: 1px solid rgba(248, 81, 73, 0.4); }
+    button.btn-danger:hover { background: var(--danger); color: #fff; }
+    
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { text-align: left; padding: 12px; border-bottom: 1px solid var(--border); font-size: 14px; }
+    th { color: var(--text-muted); font-weight: 500; }
+    
+    .badge { padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; display: inline-block; }
+    .badge-active { background: rgba(63, 185, 80, 0.2); color: var(--success); }
+    .badge-expired { background: rgba(248, 81, 73, 0.2); color: var(--danger); }
+    
+    .action-group { display: flex; gap: 6px; }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+    
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 25px; }
+    .stat-card { background: var(--card-bg); border: 1px solid var(--border); padding: 18px; border-radius: 12px; text-align: center; }
+    .stat-val { font-size: 28px; font-weight: 700; color: var(--primary); margin-top: 6px; }
+    .stat-lbl { font-size: 13px; color: var(--text-muted); }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <div class="logo">
+      <span>🌲</span> JuniperVPN Server Admin
+    </div>
+    <div style="display: flex; gap: 10px; align-items: center;">
+      <input type="password" id="adminKey" placeholder="Ключ админа (juniperadmin2026)" value="juniperadmin2026" style="width: 240px;">
+      <button onclick="loadAll()">Войти / Обновить</button>
+    </div>
+  </header>
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-lbl">Всего пользователей</div>
+      <div class="stat-val" id="totalUsers">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-lbl">Активных подписок</div>
+      <div class="stat-val" id="activeUsers" style="color: var(--success);">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-lbl">Серверы в сети</div>
+      <div class="stat-val" id="totalServers" style="color: var(--primary);">0</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Пользователи и статус подписок в MongoDB</h2>
+    <div style="overflow-x: auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Логин</th>
+            <th>Статус</th>
+            <th>Действует до</th>
+            <th>Осталось</th>
+            <th>Управление подпиской</th>
+            <th>Действия</th>
+          </tr>
+        </thead>
+        <tbody id="userTableBody">
+          <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Нажмите "Войти / Обновить" для загрузки списка</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+      <h2>VPN Локации (VLESS Reality Серверы)</h2>
+      <button onclick="toggleAddServerForm()">+ Добавить новый сервер</button>
+    </div>
+
+    <!-- Форма добавления сервера -->
+    <div id="addServerForm" style="display: none; background: #0d1117; border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 18px;">
+      <h3 style="font-size: 15px; margin-bottom: 12px; color: var(--primary);">Быстрое добавление через ссылку vless://</h3>
+      <div style="margin-bottom: 12px;">
+        <label style="font-size: 13px; color: var(--text-muted); display: block; margin-bottom: 4px;">Ссылка VLESS Reality (полная):</label>
+        <input type="text" id="newVlessUrl" placeholder="vless://uuid@host:443?security=reality&pbk=...#Локация" oninput="autoFillServerDetails()">
+      </div>
+      <div style="display: flex; gap: 12px; margin-bottom: 12px;">
+        <div style="flex: 2;">
+          <label style="font-size: 13px; color: var(--text-muted); display: block; margin-bottom: 4px;">Название локации:</label>
+          <input type="text" id="newServerName" placeholder="Нидерланды">
+        </div>
+        <div style="flex: 1;">
+          <label style="font-size: 13px; color: var(--text-muted); display: block; margin-bottom: 4px;">Флаг:</label>
+          <input type="text" id="newServerFlag" placeholder="🇳🇱">
+        </div>
+      </div>
+      <div style="display: flex; gap: 10px;">
+        <button onclick="submitNewServer()">Сохранить сервер</button>
+        <button class="btn-secondary" onclick="toggleAddServerForm()">Отмена</button>
+      </div>
+    </div>
+
+    <div style="overflow-x: auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Флаг</th>
+            <th>Название</th>
+            <th>Адрес и Порт</th>
+            <th>SNI / Протокол</th>
+            <th>Статус</th>
+            <th>Действия</th>
+          </tr>
+        </thead>
+        <tbody id="serverTableBody">
+          <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Загрузка списка серверов...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- БЛОК: УПРАВЛЕНИЕ ВЕРСИЕЙ ПРИЛОЖЕНИЯ (OTA ОБНОВЛЕНИЯ) -->
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+      <h2>🚀 Управление версией приложения (OTA Центр)</h2>
+      <span id="currentVersionBadge" class="badge badge-active" style="font-size: 13px;">Текущая: v1.0.0 (код 1)</span>
+    </div>
+    <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 18px;">
+      Настройка автоматического обновления для пользователей Android-приложения JuniperVPN. При публикации новой версии пользователи получат диалог со списком изменений и установкой прямо внутри приложения.
+    </p>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+      <div>
+        <label style="font-size: 13px; color: var(--text-muted); display: block; margin-bottom: 4px;">Номер последней версии:</label>
+        <input type="text" id="appVersionName" placeholder="Например: 1.0.2">
+      </div>
+      <div>
+        <label style="font-size: 13px; color: var(--text-muted); display: block; margin-bottom: 4px;">Код версии (число VersionCode):</label>
+        <input type="number" id="appVersionCode" placeholder="Например: 2">
+      </div>
+    </div>
+
+    <div style="margin-bottom: 15px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+        <label style="font-size: 13px; color: var(--text-muted);">Ссылка на свежий APK файл:</label>
+        <button class="btn-secondary btn-sm" onclick="setVpsApkUrl()" type="button">📍 Вставить ссылку VPS (4.223.130.97)</button>
+      </div>
+      <input type="text" id="appApkUrl" placeholder="http://4.223.130.97/JuniperVPN.apk">
+    </div>
+
+    <div style="margin-bottom: 15px;">
+      <label style="font-size: 13px; color: var(--text-muted); display: block; margin-bottom: 4px;">Описание обновления (список изменений):</label>
+      <textarea id="appChangelog" rows="4" style="background: #090d12; border: 1px solid var(--border); color: #fff; padding: 10px 14px; border-radius: 8px; font-size: 14px; outline: none; width: 100%; box-sizing: border-box; resize: vertical;" placeholder="• Добавлен умный выбор локаций&#10;• Плитка в шторке Android&#10;• Улучшена стабильность VLESS Reality"></textarea>
+    </div>
+
+    <div style="display: flex; align-items: center; justify-content: space-between; background: #090d12; border: 1px solid var(--border); padding: 12px 16px; border-radius: 8px; margin-bottom: 18px;">
+      <div>
+        <div style="font-weight: 600; font-size: 14px; color: var(--text);">Обязательное обновление (Force Update)</div>
+        <div style="font-size: 12px; color: var(--text-muted);">Блокирует работу старых версий приложения при критических изменениях</div>
+      </div>
+      <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+        <input type="checkbox" id="appForceUpdate" style="width: 20px; height: 20px; cursor: pointer; accent-color: var(--primary);">
+        <span style="font-size: 13px; font-weight: 600;">Включено</span>
+      </label>
+    </div>
+
+    <div style="display: flex; gap: 10px;">
+      <button onclick="saveVersionSettings()">💾 Сохранить и опубликовать версию</button>
+      <button class="btn-secondary" onclick="loadVersionSettings()">Перезагрузить данные</button>
+    </div>
+  </div>
+
+<script>
+  const API_BASE = '/api/admin';
+
+  function getHeaders() {
+    const key = document.getElementById('adminKey').value;
+    return {
+      'Content-Type': 'application/json',
+      'x-admin-key': key
+    };
+  }
+
+  async function loadUsers() {
+    try {
+      const res = await fetch(`${API_BASE}/users`, { headers: getHeaders() });
+      if (!res.ok) throw new Error('Ошибка авторизации. Проверьте пароль администратора.');
+      
+      const users = await res.json();
+      renderUsers(users);
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  function renderUsers(users) {
+    const tbody = document.getElementById('userTableBody');
+    tbody.innerHTML = '';
+    
+    let activeCount = 0;
+    const now = new Date();
+
+    if (users.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Пользователей пока нет. Зарегистрируйтесь через мобильное приложение.</td></tr>';
+      document.getElementById('totalUsers').innerText = '0';
+      document.getElementById('activeUsers').innerText = '0';
+      return;
+    }
+
+    users.forEach(u => {
+      const expiry = new Date(u.subscriptionExpiresAt);
+      const isSubActive = u.isActive && expiry > now;
+      if (isSubActive) activeCount++;
+
+      const diffDays = Math.max(0, Math.ceil((expiry - now) / (1000 * 60 * 60 * 24)));
+      const dateStr = expiry.toLocaleDateString('ru-RU') + ' ' + expiry.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td style="font-weight: 600;">${u.username}</td>
+        <td><span class="badge ${isSubActive ? 'badge-active' : 'badge-expired'}">${isSubActive ? 'Активна' : 'Истекла'}</span></td>
+        <td>${dateStr}</td>
+        <td>${isSubActive ? diffDays + ' дн.' : '0 дн.'}</td>
+        <td>
+          <div class="action-group">
+            <button class="btn-secondary btn-sm" onclick="extendSub('${u._id}', 30)">+30 дней</button>
+            <button class="btn-secondary btn-sm" onclick="extendSub('${u._id}', 90)">+90 дней</button>
+            <button class="btn-secondary btn-sm" onclick="extendSub('${u._id}', 365)">+1 год</button>
+          </div>
+        </td>
+        <td>
+          <div class="action-group">
+            <button class="btn-secondary btn-sm" onclick="toggleStatus('${u._id}')">${u.isActive ? 'Заблокир.' : 'Разблокир.'}</button>
+            <button class="btn-danger btn-sm" onclick="deleteUser('${u._id}', '${u.username}')">Удалить</button>
+          </div>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    document.getElementById('totalUsers').innerText = users.length;
+    document.getElementById('activeUsers').innerText = activeCount;
+  }
+
+  async function extendSub(userId, days) {
+    try {
+      const res = await fetch(`${API_BASE}/extend`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ userId, days })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      loadUsers();
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function toggleStatus(userId) {
+    try {
+      const res = await fetch(`${API_BASE}/toggle-status`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ userId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      loadUsers();
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function deleteUser(userId, username) {
+    if (!confirm(`Вы уверены, что хотите удалить пользователя ${username}?`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/user/${userId}`, {
+        method: 'DELETE',
+        headers: getHeaders()
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      loadUsers();
+  async function loadServers() {
+    try {
+      const res = await fetch(`${API_BASE}/servers`, { headers: getHeaders() });
+      if (!res.ok) throw new Error('Ошибка загрузки серверов');
+      const servers = await res.json();
+      renderServers(servers);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function renderServers(servers) {
+    const tbody = document.getElementById('serverTableBody');
+    tbody.innerHTML = '';
+    
+    let activeServers = 0;
+    if (servers.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Серверов пока нет. Нажмите "+ Добавить новый сервер".</td></tr>';
+      document.getElementById('totalServers').innerText = '0';
+      return;
+    }
+
+    servers.forEach(s => {
+      if (s.isActive) activeServers++;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td style="font-size: 20px;">${s.flag || '🌐'}</td>
+        <td style="font-weight: 600;">${s.name}</td>
+        <td><code>${s.address}:${s.port}</code></td>
+        <td><small style="color: var(--text-muted);">${s.sni || '—'} (${s.flow || 'direct'})</small></td>
+        <td><span class="badge ${s.isActive ? 'badge-active' : 'badge-expired'}">${s.isActive ? 'Активен' : 'Отключен'}</span></td>
+        <td>
+          <div class="action-group">
+            <button class="btn-secondary btn-sm" onclick="toggleServerStatus('${s._id || s.id}')">${s.isActive ? 'Отключить' : 'Включить'}</button>
+            <button class="btn-danger btn-sm" onclick="deleteServer('${s._id || s.id}', '${s.name}')">Удалить</button>
+          </div>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    document.getElementById('totalServers').innerText = `${activeServers} / ${servers.length}`;
+  }
+
+  function toggleAddServerForm() {
+    const form = document.getElementById('addServerForm');
+    form.style.display = form.style.display === 'none' ? 'block' : 'none';
+  }
+
+  function autoFillServerDetails() {
+    const vless = document.getElementById('newVlessUrl').value.trim();
+    if (!vless.toLowerCase().startsWith('vless://')) return;
+
+    try {
+      const url = new URL(vless);
+      if (url.hash) {
+        const hash = decodeURIComponent(url.hash.substring(1));
+        if (hash && !document.getElementById('newServerName').value) {
+          document.getElementById('newServerName').value = hash;
+        }
+      }
+      const host = (url.hostname || '').toLowerCase();
+      const name = (document.getElementById('newServerName').value || '').toLowerCase();
+      const combined = name + ' ' + host;
+
+      let flag = '🌐';
+      if (combined.includes('швеци') || combined.includes('sweden') || combined.includes('se')) flag = '🇸🇪';
+      else if (combined.includes('польш') || combined.includes('poland') || combined.includes('pl')) flag = '🇵🇱';
+      else if (combined.includes('нидерл') || combined.includes('netherlands') || combined.includes('nl') || combined.includes('amsterdam')) flag = '🇳🇱';
+      else if (combined.includes('герман') || combined.includes('germany') || combined.includes('de')) flag = '🇩🇪';
+      else if (combined.includes('сша') || combined.includes('usa') || combined.includes('us')) flag = '🇺🇸';
+      else if (combined.includes('финлян') || combined.includes('finland') || combined.includes('fi')) flag = '🇫🇮';
+      else if (combined.includes('турци') || combined.includes('turkey') || combined.includes('tr')) flag = '🇹🇷';
+      else if (combined.includes('росси') || combined.includes('russia') || combined.includes('ru')) flag = '🇷🇺';
+
+      if (!document.getElementById('newServerFlag').value) {
+        document.getElementById('newServerFlag').value = flag;
+      }
+    } catch (_) {}
+  }
+
+  async function submitNewServer() {
+    const vlessUrl = document.getElementById('newVlessUrl').value.trim();
+    const name = document.getElementById('newServerName').value.trim();
+    const flag = document.getElementById('newServerFlag').value.trim();
+
+    if (!vlessUrl.toLowerCase().startsWith('vless://')) {
+      alert('Вставьте полную vless:// ссылку подключения');
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/servers`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ vlessUrl, name, flag })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка добавления сервера');
+
+      alert(data.message || 'Сервер успешно добавлен!');
+      document.getElementById('newVlessUrl').value = '';
+      document.getElementById('newServerName').value = '';
+      document.getElementById('newServerFlag').value = '';
+      toggleAddServerForm();
+      loadServers();
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function toggleServerStatus(id) {
+    try {
+      const res = await fetch(`${API_BASE}/servers/${id}/toggle`, {
+        method: 'POST',
+        headers: getHeaders()
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      loadServers();
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function deleteServer(id, name) {
+    if (!confirm(`Удалить сервер "${name}"? Пользователи больше не смогут к нему подключаться.`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/servers/${id}`, {
+        method: 'DELETE',
+        headers: getHeaders()
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      loadServers();
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  function setVpsApkUrl() {
+    document.getElementById('appApkUrl').value = 'http://4.223.130.97/JuniperVPN.apk';
+  }
+
+  async function loadVersionSettings() {
+    try {
+      const res = await fetch('/api/app-version');
+      if (!res.ok) return;
+      const data = await res.json();
+      
+      document.getElementById('appVersionName').value = data.versionName || '1.0.0';
+      document.getElementById('appVersionCode').value = data.versionCode || 1;
+      document.getElementById('appApkUrl').value = data.apkUrl || 'http://4.223.130.97/JuniperVPN.apk';
+      document.getElementById('appChangelog').value = data.changelog || '';
+      document.getElementById('appForceUpdate').checked = Boolean(data.isForceUpdate);
+
+      const badge = document.getElementById('currentVersionBadge');
+      if (badge) {
+        badge.innerText = `Опубликовано: v${data.versionName || '1.0.0'} (код ${data.versionCode || 1})${data.isForceUpdate ? ' [ОБЯЗАТЕЛЬНОЕ]' : ''}`;
+        badge.className = data.isForceUpdate ? 'badge badge-expired' : 'badge badge-active';
+      }
+    } catch (e) {
+      console.warn('Ошибка загрузки информации о версии:', e);
+    }
+  }
+
+  async function saveVersionSettings() {
+    const versionName = document.getElementById('appVersionName').value.trim();
+    const versionCode = parseInt(document.getElementById('appVersionCode').value);
+    const apkUrl = document.getElementById('appApkUrl').value.trim();
+    const changelog = document.getElementById('appChangelog').value.trim();
+    const isForceUpdate = document.getElementById('appForceUpdate').checked;
+
+    if (!versionName || !versionCode) {
+      alert('Укажите номер версии (например, 1.0.2) и код версии (число)');
+      return;
+    }
+    if (!apkUrl) {
+      alert('Укажите ссылку на APK файл');
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/app-version`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          versionCode,
+          versionName,
+          apkUrl,
+          changelog,
+          isForceUpdate
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка сохранения');
+      
+      alert(`🎉 Версия ${versionName} успешно опубликована! Пользователи получат обновление.`);
+      loadVersionSettings();
+    } catch (e) {
+      alert('Ошибка: ' + e.message);
+    }
+  }
+
+  function loadAll() {
+    loadUsers();
+    loadServers();
+    loadVersionSettings();
+  }
+
+  // Автозагрузка при открытии
+  window.onload = loadAll;
+</script>
+
+</body>
+</html>
